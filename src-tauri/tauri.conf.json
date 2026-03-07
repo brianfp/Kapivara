@@ -34,7 +34,7 @@
       "csp": null
     }
   },
-"bundle": {
+  "bundle": {
     "active": true,
     "targets": "all",
     "icon": [
@@ -46,7 +46,6 @@
     ],
     "macOS": {
       "entitlements": "entitlements.plist",
-      "signingIdentity": "${APPLE_CERTIFICATE}",
       "hardenedRuntime": true
     }
   }
