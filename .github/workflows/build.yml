@@ -57,6 +57,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
+          shared-key: "ubuntu-22.04-fresh"
           workspaces: ./src-tauri -> target
 
       - name: Install Linux system dependencies
