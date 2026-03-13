@@ -24,13 +24,16 @@ class RequestService {
                 rb.raw_data as body,
                 (SELECT json_group_array(json_object('id', rp.id, 'key', rp.key, 'value', rp.value, 'description', rp.description, 'is_active', rp.is_active)) 
                  FROM request_params rp 
-                 WHERE rp.request_id = r.id) as params
+                 WHERE rp.request_id = r.id) as params,
+                (SELECT json_object('id', ra.id, 'auth_type', ra.auth_type, 'auth_data', ra.auth_data)
+                 FROM request_auth ra
+                 WHERE ra.request_id = r.id) as auth
             FROM requests r 
             LEFT JOIN request_body rb ON r.id = rb.request_id 
             WHERE r.project_id = $1
         `;
         const results = await this.dbService.select<any[]>(query, [projectId]);
-        
+
         // Parse the SQLite TEXT into JSON Object
         return results.map(row => {
             if (row.response && typeof row.response === 'string') {
@@ -90,6 +93,17 @@ class RequestService {
             request.id,
             request.body_type || 'none',
             request.body || null
+        ]);
+
+        const authQuery = `
+            INSERT INTO request_auth (id, request_id, auth_type, auth_data)
+            VALUES ($1, $2, $3, $4)
+        `;
+        await this.dbService.execute(authQuery, [
+            crypto.randomUUID(),
+            request.id,
+            'none',
+            null
         ]);
     }
 
@@ -169,20 +183,20 @@ class RequestService {
 
         // Handle Params updates
         if (request.params !== undefined) {
-             
-             let paramsArray: any[] = [];
-             try {
-                paramsArray = typeof request.params === 'string' ? JSON.parse(request.params) : request.params;
-             } catch (e) {
-                 paramsArray = [];
-             }
 
-             if (Array.isArray(paramsArray)) {
+            let paramsArray: any[] = [];
+            try {
+                paramsArray = typeof request.params === 'string' ? JSON.parse(request.params) : request.params;
+            } catch (e) {
+                paramsArray = [];
+            }
+
+            if (Array.isArray(paramsArray)) {
                 await this.dbService.execute('DELETE FROM request_params WHERE request_id = $1', [request.id]);
-                
+
                 for (const param of paramsArray) {
                     if (!param.key && !param.value) continue; // Skip empty
-                    
+
                     await this.dbService.execute(`
                         INSERT INTO request_params (id, request_id, key, value, description, is_active)
                         VALUES ($1, $2, $3, $4, $5, $6)
@@ -195,7 +209,37 @@ class RequestService {
                         param.is_active
                     ]);
                 }
-             }
+            }
+        }
+
+        // Handle Auth updates
+        if (request.auth !== undefined) {
+            let authObj: any = null;
+            try {
+                authObj = typeof request.auth === 'string' ? JSON.parse(request.auth) : request.auth;
+            } catch (e) {
+                authObj = null;
+            }
+
+            if (authObj) {
+                const existingAuth = await this.dbService.select<any[]>('SELECT id FROM request_auth WHERE request_id = $1', [request.id]);
+                if (existingAuth && existingAuth.length > 0) {
+                    const updateAuthQuery = `UPDATE request_auth SET auth_type = $1, auth_data = $2 WHERE request_id = $3`;
+                    await this.dbService.execute(updateAuthQuery, [
+                        authObj.auth_type || 'none',
+                        authObj.auth_data || null,
+                        request.id
+                    ]);
+                } else {
+                    const insertAuthQuery = `INSERT INTO request_auth (id, request_id, auth_type, auth_data) VALUES ($1, $2, $3, $4)`;
+                    await this.dbService.execute(insertAuthQuery, [
+                        crypto.randomUUID(),
+                        request.id,
+                        authObj.auth_type || 'none',
+                        authObj.auth_data || null
+                    ]);
+                }
+            }
         }
     }
 }

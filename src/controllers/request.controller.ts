@@ -87,11 +87,58 @@ class RequestController {
 
     public async executeRequest(request: RequestInfo): Promise<RequestResponse> {
         try {
-            // TODO: Get environment variables and set headers, body, etc
+            // Parse Params
+            let paramsArray: any[] = [];
+            try {
+                paramsArray = typeof request.params === 'string' ? JSON.parse(request.params) : request.params;
+            } catch (e) {
+                paramsArray = [];
+            }
+            if (!Array.isArray(paramsArray)) paramsArray = [];
+
+            const activeParams = paramsArray.filter(p => p.is_active !== 0 && p.key);
+            let finalUrl = request.url;
+            if (activeParams.length > 0) {
+                const searchParams = new URLSearchParams();
+                activeParams.forEach(p => searchParams.append(p.key, p.value || ''));
+                finalUrl += (finalUrl.includes('?') ? '&' : '?') + searchParams.toString();
+            }
+
+            // Setup Headers
+            const headers: Record<string, string> = {};
+
+            // Handle Authorization
+            let authObj: any = null;
+            try {
+                authObj = typeof request.auth === 'string' ? JSON.parse(request.auth) : request.auth;
+            } catch (e) { }
+
+            if (authObj && authObj.auth_type !== 'none') {
+                let authData: any = {};
+                try {
+                    authData = typeof authObj.auth_data === 'string' ? JSON.parse(authObj.auth_data) : authObj.auth_data;
+                } catch (e) { }
+
+                if (authObj.auth_type === 'bearer' && authData?.token) {
+                    headers['Authorization'] = `Bearer ${authData.token}`;
+                } else if (authObj.auth_type === 'basic' && (authData?.username || authData?.password)) {
+                    const credentials = `${authData.username || ''}:${authData.password || ''}`;
+                    headers['Authorization'] = `Basic ${btoa(credentials)}`;
+                } else if (authObj.auth_type === 'apikey' && authData?.key && authData?.value) {
+                    if (authData.add_to === 'query') {
+                        const separator = finalUrl.includes('?') ? '&' : '?';
+                        finalUrl += `${separator}${encodeURIComponent(authData.key)}=${encodeURIComponent(authData.value)}`;
+                    } else {
+                        // Default to header
+                        headers[authData.key] = authData.value;
+                    }
+                } // wait for more auth types
+            }
+
             const response = await invoke<RequestResponse>('make_http_request', {
                 method: request.method,
-                url: request.url + request.params,
-                headers: {},
+                url: finalUrl,
+                headers,
                 body: request.body || null
             });
 
@@ -103,20 +150,45 @@ class RequestController {
                 body_type: request.body_type,
                 body: request.body
             };
-            
+
             useRequestStore.getState().updateRequest({
                 id: request.id,
                 project_id: request.project_id,
                 ...updates
             });
-            
+
             // Persist the new response to SQLite database
             await this.updateRequest(request.id, request.project_id, updates);
 
             return response;
-        } catch (error) {
+        } catch (error: any) {
             console.error('Failed to execute request:', error);
-            throw error;
+            
+            const errorResponse: RequestResponse = {
+                status: 0,
+                status_text: "Connection Error",
+                headers: {},
+                body: typeof error === 'string' ? error : error?.message || String(error),
+                time_ms: 0
+            };
+
+            const updates: Partial<RequestInfo> = {
+                url: request.url,
+                method: request.method,
+                response: errorResponse,
+                body_type: request.body_type,
+                body: request.body
+            };
+
+            useRequestStore.getState().updateRequest({
+                id: request.id,
+                project_id: request.project_id,
+                ...updates
+            });
+
+            await this.updateRequest(request.id, request.project_id, updates);
+
+            throw errorResponse;
         }
     }
 
