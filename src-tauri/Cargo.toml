@@ -1,6 +1,6 @@
 [package]
 name = "kapivara"
-version = "0.1.8"
+version = "0.1.9"
 description = "Gestiona tus APIs para tus proyectos"
 authors = ["José Galdámez <josegaldamez@gmail.com>"]
 edition = "2024"
