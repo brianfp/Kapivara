@@ -1,5 +1,5 @@
 import RequestService from "../services/request.service";
-import { RequestInfo, RequestResponse, Collection } from "@/types";
+import { RequestInfo, RequestResponse, Collection, SavedResponse } from "@/types";
 import { useRequestStore } from "@/stores/request.store";
 import { useConsoleStore } from "@/stores/console.store";
 import { invoke } from "@tauri-apps/api/core";
@@ -104,6 +104,9 @@ class RequestController {
 
             const activeParams = paramsArray.filter(p => p.is_active !== 0 && p.key);
             let finalUrl = resolveTemplateString(request.url, activeVariables);
+            if (finalUrl && !/^https?:\/\//i.test(finalUrl)) {
+                finalUrl = 'https://' + finalUrl;
+            }
             if (activeParams.length > 0) {
                 const searchParams = new URLSearchParams();
                 activeParams.forEach(p => {
@@ -289,6 +292,17 @@ class RequestController {
         }
     }
 
+    public async deleteRequest(requestId: string, projectId: string): Promise<void> {
+        try {
+            const service = await this.getService();
+            await service.deleteRequest(requestId);
+            useRequestStore.getState().removeRequest(projectId, requestId);
+        } catch (error) {
+            console.error('Failed to delete request:', error);
+            throw error;
+        }
+    }
+
     public async updateRequest(requestId: string, projectId: string, updates: Partial<RequestInfo>) {
         try {
             const service = await this.getService();
@@ -296,6 +310,50 @@ class RequestController {
             useRequestStore.getState().updateRequest({ id: requestId, project_id: projectId, ...updates, is_dirty: false });
         } catch (error) {
             console.error('Failed to update request:', error);
+        }
+    }
+
+    public async getSavedResponses(requestId: string): Promise<SavedResponse[]> {
+        try {
+            const service = await this.getService();
+            const responses = await service.getSavedResponses(requestId);
+            useRequestStore.getState().setSavedResponses(requestId, responses);
+            return responses;
+        } catch (error) {
+            console.error('Failed to get saved responses:', error);
+            return [];
+        }
+    }
+
+    public async saveCurrentResponse(requestId: string, name: string, response: RequestResponse): Promise<void> {
+        try {
+            const service = await this.getService();
+            const saved: SavedResponse = {
+                id: crypto.randomUUID(),
+                request_id: requestId,
+                name,
+                status: response.status,
+                status_text: response.status_text,
+                headers: JSON.stringify(response.headers),
+                body: response.body,
+                time_ms: response.time_ms,
+            };
+            await service.saveResponse(saved);
+            useRequestStore.getState().addSavedResponse(saved);
+        } catch (error) {
+            console.error('Failed to save response:', error);
+            throw error;
+        }
+    }
+
+    public async deleteSavedResponse(requestId: string, id: string): Promise<void> {
+        try {
+            const service = await this.getService();
+            await service.deleteSavedResponse(id);
+            useRequestStore.getState().removeSavedResponse(requestId, id);
+        } catch (error) {
+            console.error('Failed to delete saved response:', error);
+            throw error;
         }
     }
 }

@@ -5,52 +5,54 @@ import { toast } from "react-toastify";
 
 class SettingsController {
     private service: SettingsService | null = null;
+    private servicePromise: Promise<SettingsService> | null = null;
 
     private async getService() {
-        if (!this.service) {
-            try {
-                this.service = await SettingsService.getInstance();
-            } catch (e) {
-                this.service = null;
-                throw e;
-            }
+        if (this.service) return this.service;
+        if (!this.servicePromise) {
+            this.servicePromise = SettingsService.getInstance()
+                .then(s => {
+                    this.service = s;
+                    return s;
+                })
+                .catch(e => {
+                    this.servicePromise = null;
+                    throw e;
+                });
         }
-        return this.service;
+        return this.servicePromise;
     }
 
-    public async loadSettings(retries = 3, delayMs = 500) {
+    public async loadSettings() {
         useSettingsStore.getState().setLoading(true);
-        for (let attempt = 0; attempt < retries; attempt++) {
-            try {
-                const service = await this.getService();
-                const result = await service.getSettings();
 
-                const loadedSettings: Partial<AppSettings> = {};
-                result.forEach(item => {
-                    const key = item.key as keyof AppSettings;
-                    let value: any = item.value;
-                    if (key === 'editor_font_size' || key === 'request_timeout') {
-                        value = parseInt(value, 10);
-                    } else if (value === 'true') {
-                        value = true;
-                    } else if (value === 'false') {
-                        value = false;
-                    }
-                    loadedSettings[key] = value;
-                });
+        try {
+            const service = await this.getService()
+            const result = await service.getSettings();
 
-                useSettingsStore.getState().setSettings(loadedSettings);
-                return;
-            } catch (error) {
-                this.service = null;
-                if (attempt < retries - 1) {
-                    await new Promise(r => setTimeout(r, delayMs));
-                } else {
-                    console.error('Failed to load settings:', error);
-                    toast.error('Failed to load settings');
-                    useSettingsStore.getState().setSettings({});
+            const loadedSettings: Partial<AppSettings> = {};
+
+            result.forEach(item => {
+                const key = item.key as keyof AppSettings;
+                let value: any = item.value;
+                // Parse types
+                if (key === 'editor_font_size' || key === 'request_timeout') {
+                    value = parseInt(value, 10);
+                } else if (value === 'true') {
+                    value = true;
+                } else if (value === 'false') {
+                    value = false;
                 }
-            }
+
+                loadedSettings[key] = value;
+            });
+
+            useSettingsStore.getState().setSettings(loadedSettings);
+        } catch (error) {
+            console.error('Failed to load settings:', error);
+            const message = error instanceof Error ? error.message : String(error);
+            toast.error(`Failed to load settings: ${message}`);
+            useSettingsStore.getState().setLoading(false);
         }
     }
 

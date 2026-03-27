@@ -33,6 +33,18 @@ export interface Collection {
     created_at?: string;
 }
 
+export interface SavedResponse {
+    id: string;
+    request_id: string;
+    name: string;
+    status: number;
+    status_text: string;
+    headers: string; // JSON string
+    body?: string;
+    time_ms: number;
+    created_at?: string;
+}
+
 export interface RequestResponse {
     status: number;
     status_text: string;

@@ -35,16 +35,20 @@ function App() {
 
   useEffect(() => {
     const initApp = async () => {
-      // 1. Load settings and projects in parallel
-      await Promise.all([
-        settingsController.loadSettings(),
-        projectController.loadProjects(),
-      ]);
-
-      // 2. Close splashscreen
-      setTimeout(() => {
-        invoke("close_splashscreen");
-      }, 50);
+      try {
+        // 1. Wait for DB and Load settings and projects in parallel
+        await Promise.all([
+          settingsController.loadSettings(),
+          projectController.loadProjects(),
+        ]);
+      } catch (error) {
+        console.error('Initialization failed:', error);
+      } finally {
+        // 2. Close splashscreen
+        setTimeout(() => {
+          invoke("close_splashscreen");
+        }, 500); // Give it a bit more time
+      }
     };
 
     initApp();

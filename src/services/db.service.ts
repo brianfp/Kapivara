@@ -7,12 +7,13 @@ class DBService {
 
     private constructor() { }
 
-    public static getInstance(): Promise<DBService> {
+    public static async getInstance(): Promise<DBService> {
         if (!DBService.initPromise) {
             const inst = new DBService();
             DBService.initPromise = inst.init()
                 .then(() => inst)
                 .catch((e) => {
+                    console.error('Failed to initialize database:', e);
                     DBService.initPromise = null;
                     throw e;
                 });
@@ -21,15 +22,38 @@ class DBService {
     }
 
     private async init() {
-        this.db = await Database.load(this.dbName);
+        try {
+            this.db = await Database.load(this.dbName);
+        } catch (error) {
+            console.error('Error loading database:', error);
+            throw error;
+        }
     }
 
     public async select<T>(query: string, args?: unknown[]): Promise<T> {
-        return await this.db!.select<T>(query, args);
+        const service = await DBService.getInstance();
+        if (!service.db) {
+            throw new Error('Database not initialized');
+        }
+        try {
+            return await service.db.select<T>(query, args);
+        } catch (error) {
+            console.error('Database select error:', error, 'Query:', query);
+            throw error;
+        }
     }
 
     public async execute(query: string, args?: unknown[]): Promise<void> {
-        await this.db!.execute(query, args);
+        const service = await DBService.getInstance();
+        if (!service.db) {
+            throw new Error('Database not initialized');
+        }
+        try {
+            await service.db.execute(query, args);
+        } catch (error) {
+            console.error('Database execute error:', error, 'Query:', query);
+            throw error;
+        }
     }
 }
 

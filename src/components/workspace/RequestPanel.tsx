@@ -1,11 +1,13 @@
 import { RequestInfo, RequestParam, RequestHeader } from "@/types";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { requestController } from "@/controllers/request.controller";
 import { useRequestStore } from "@/stores/request.store";
 import { useEnvironmentStore } from "@/stores/environment.store";
 import { environmentController } from "@/controllers/environment.controller";
 import { JsonViewer } from "./JsonViewer";
 import { FormRequestSection } from "./FormRequestSection";
+import { SavedResponsesPanel } from "./SavedResponsesPanel";
+import { SaveResponseModal } from "@/components/modals";
 import { toast } from "react-toastify";
 import { Edit2, AlertCircle, Info, PanelsRightBottom, PanelsTopLeft } from "lucide-react";
 import { ResponseStatusBar } from "./ResponseStatusBar";
@@ -27,6 +29,7 @@ interface RequestPanelProps {
 }
 
 const EMPTY_ENVIRONMENTS: any[] = [];
+const EMPTY_SAVED_RESPONSES: any[] = [];
 
 export const RequestPanel = ({ request }: RequestPanelProps) => {
     const [method, setMethod] = useState(request.method || "GET");
@@ -83,15 +86,22 @@ export const RequestPanel = ({ request }: RequestPanelProps) => {
     const [isEnvironmentPanelVisible, setIsEnvironmentPanelVisible] = useState(false);
     const [isResponseCollapsed, setIsResponseCollapsed] = useState(false);
     const [resolvedVariables, setResolvedVariables] = useState<Record<string, string>>({});
-    const [responseViewTab, setResponseViewTab] = useState<'response' | 'preview'>('response');
+    const [responseViewTab, setResponseViewTab] = useState<'response' | 'preview' | 'saved'>('response');
+    const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+
+    const savedResponses = useRequestStore((state) => state.savedResponsesByRequest[request.id] ?? EMPTY_SAVED_RESPONSES);
 
     // Reset view tab whenever a new response arrives
     useEffect(() => {
         setResponseViewTab('response');
     }, [request.response?.status, request.response?.body]);
 
+    useEffect(() => {
+        requestController.getSavedResponses(request.id);
+    }, [request.id]);
+
     const projectEnvironments = useEnvironmentStore((state) => state.projectEnvironmentsByProject[request.project_id] ?? EMPTY_ENVIRONMENTS);
-    const globalEnvironments = useEnvironmentStore((state) => state.globalEnvironments);
+    const globalEnvironments = useEnvironmentStore((state) => state.globalEnvironments ?? EMPTY_ENVIRONMENTS);
     const activeProjectEnvironmentId = useEnvironmentStore((state) => state.activeProjectEnvironmentIdByProject[request.project_id] ?? null);
     const activeGlobalEnvironmentId = useEnvironmentStore((state) => state.activeGlobalEnvironmentId);
 
@@ -143,7 +153,7 @@ export const RequestPanel = ({ request }: RequestPanelProps) => {
         } catch {
             setAuth({ auth_type: 'none' });
         }
-    }, [request]);
+    }, [request.id]);
 
     // Handle resizing
     useEffect(() => {
@@ -234,47 +244,33 @@ export const RequestPanel = ({ request }: RequestPanelProps) => {
     };
 
     const handleUrlChange = (newUrl: string) => {
-        // 1. Separate Base URL and Query String
-        const [baseUrl, queryString] = newUrl.split('?');
-
-        // 2. Parse Query String to Params
-        let newParams: RequestParam[] = [];
-        if (queryString) {
-            const pairs = queryString.split('&');
-            newParams = pairs.map(pair => {
-                const [key, value] = pair.split('=');
-                // Try to find existing param to preserve description/ID
-                const existing = queryParams.find(p => p.key === key && p.value === (value || ''));
-                return {
-                    id: existing?.id || crypto.randomUUID(),
-                    request_id: request.id,
-                    key: key || '',
-                    value: value || '',
-                    description: existing?.description || '',
-                    is_active: 1
-                };
-            });
+        const qIndex = newUrl.indexOf('?');
+        if (qIndex === -1) {
+            setUrl(newUrl);
+        } else {
+            const baseUrl = newUrl.slice(0, qIndex);
+            const queryString = newUrl.slice(qIndex + 1);
+            const newParams: RequestParam[] = queryString
+                ? queryString.split('&').map(pair => {
+                    const [key, value] = pair.split('=');
+                    const existing = queryParams.find(p => p.key === key && p.value === (value || ''));
+                    return {
+                        id: existing?.id || crypto.randomUUID(),
+                        request_id: request.id,
+                        key: key || '',
+                        value: value || '',
+                        description: existing?.description || '',
+                        is_active: 1
+                    };
+                })
+                : [];
+            setUrl(baseUrl);
+            setQueryParams(newParams);
         }
-
-        // 3. Update State
-        setUrl(baseUrl || newUrl); // Keep original if no query string yet? 
-        // Logic check: If I type "http://api.com?foo=bar", baseUrl is "http://api.com".
-        // If I type "http://api.com", baseUrl is "http://api.com", queryString is undefined.
-        // But `url` state in RequestPanel seems to be "base url" only based on `url + getQueries()`.
-        // Wait, if I type in the input, `newUrl` is the full string.
-        // The Input value is `url + getQueries()`.
-        // If I change it, I get the full new string.
-        // So I should set `url` to just the base part.
-
-        setUrl(baseUrl);
-        setQueryParams(newParams);
-
-        // 4. Update Store
         useRequestStore.getState().updateRequest({
             id: request.id,
             project_id: request.project_id,
-            url: baseUrl,
-            params: JSON.stringify(newParams),
+            url: newUrl,
             is_dirty: true
         });
     };
@@ -329,17 +325,36 @@ export const RequestPanel = ({ request }: RequestPanelProps) => {
         });
     };
 
-    const handleSave = async () => {
+    const handleSave = useCallback(async () => {
         await requestController.updateRequest(request.id, request.project_id, {
-            url: url,
-            method: method,
-            body: body,
+            url,
+            method,
+            body,
             body_type: bodyType,
             params: JSON.stringify(queryParams),
             headers: JSON.stringify(headers),
             auth: JSON.stringify(auth)
         });
         toast.success("Request saved");
+    }, [request.id, request.project_id, url, method, body, bodyType, queryParams, headers, auth]);
+
+    const handleSaveResponse = async (name: string) => {
+        if (!request.response) return;
+        try {
+            await requestController.saveCurrentResponse(request.id, name, request.response);
+            toast.success('Response saved');
+        } catch {
+            toast.error('Failed to save response');
+        }
+    };
+
+    const handleDeleteSavedResponse = async (id: string) => {
+        try {
+            await requestController.deleteSavedResponse(request.id, id);
+            toast.success('Saved response deleted');
+        } catch {
+            toast.error('Failed to delete saved response');
+        }
     };
 
     const handleProjectEnvironmentChange = async (value: string) => {
@@ -475,12 +490,12 @@ export const RequestPanel = ({ request }: RequestPanelProps) => {
                     request={request}
                     isCollapsed={isResponseCollapsed}
                     onToggleCollapse={() => setIsResponseCollapsed((prev) => !prev)}
+                    onSaveResponse={request.response ? () => setIsSaveModalOpen(true) : undefined}
                 />
 
                 {!isResponseCollapsed ? <div className="flex-1 flex flex-col min-h-0 relative">
                     {request.response ? (
                         request.response.status === 0 ? (
-                            /* ── Connection error ── */
                             <div className="flex-1 overflow-auto p-4">
                                 <div className="flex h-full items-start justify-center p-8">
                                     <div className="max-w-3xl w-full flex flex-col gap-6">
@@ -522,7 +537,7 @@ export const RequestPanel = ({ request }: RequestPanelProps) => {
                             <>
                                 {/* Tab bar */}
                                 <div className="flex items-center gap-1 px-4 pt-2 pb-0 shrink-0 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-[#0d1117]">
-                                    {(['response', 'preview'] as const).map((tab) => (
+                                    {(['response', 'preview', 'saved'] as const).map((tab) => (
                                         <button
                                             key={tab}
                                             onClick={() => setResponseViewTab(tab)}
@@ -532,7 +547,7 @@ export const RequestPanel = ({ request }: RequestPanelProps) => {
                                                     : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
                                             }`}
                                         >
-                                            {tab === 'response' ? 'Response' : 'Preview'}
+                                            {tab === 'saved' ? `Saved${savedResponses.length > 0 ? ` (${savedResponses.length})` : ''}` : tab === 'response' ? 'Response' : 'Preview'}
                                         </button>
                                     ))}
                                 </div>
@@ -543,13 +558,18 @@ export const RequestPanel = ({ request }: RequestPanelProps) => {
                                         <div className="p-4 h-full">
                                             <JsonViewer data={request.response.body} />
                                         </div>
-                                    ) : (
+                                    ) : responseViewTab === 'preview' ? (
                                         <iframe
                                             key={request.response.body?.slice(0, 40)}
                                             srcDoc={request.response.body ?? ''}
                                             sandbox="allow-same-origin allow-scripts"
                                             className="w-full h-full border-0 bg-white"
                                             title="Response Preview"
+                                        />
+                                    ) : (
+                                        <SavedResponsesPanel
+                                            responses={savedResponses}
+                                            onDelete={handleDeleteSavedResponse}
                                         />
                                     )}
                                 </div>
@@ -562,6 +582,13 @@ export const RequestPanel = ({ request }: RequestPanelProps) => {
                     )}
                 </div> : null}
             </div>
+
+            <SaveResponseModal
+                isOpen={isSaveModalOpen}
+                defaultName={`${request.name} - ${new Date().toLocaleTimeString()}`}
+                onClose={() => setIsSaveModalOpen(false)}
+                onConfirm={handleSaveResponse}
+            />
         </div>
     );
 };

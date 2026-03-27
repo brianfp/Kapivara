@@ -64,6 +64,15 @@ export const Sidebar = ({ projectId, onSelectRequest, activeRequestId }: Sidebar
         }
     };
 
+    const handleDeleteRequest = async (req: RequestInfo) => {
+        try {
+            await requestController.deleteRequest(req.id, projectId);
+            toast.success('Request deleted');
+        } catch {
+            toast.error('Failed to delete request');
+        }
+    };
+
     const openCreateRequestModal = (folderId?: string) => {
         setActiveFolderIdForCreate(folderId);
         setIsCreateModalOpen(true);
@@ -112,6 +121,7 @@ export const Sidebar = ({ projectId, onSelectRequest, activeRequestId }: Sidebar
                     projectId={projectId}
                     activeRequestId={activeRequestId}
                     onSelectRequest={onSelectRequest}
+                    onDeleteRequest={handleDeleteRequest}
                     expandedFolders={expandedFolders}
                     toggleFolder={toggleFolder}
                     openCreateRequestModal={openCreateRequestModal}

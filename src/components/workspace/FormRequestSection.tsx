@@ -74,7 +74,7 @@ export const FormRequestSection = ({
         return { envId: activeProjectEnvironmentId || activeGlobalEnvironmentId || '', currentValue: '' };
     }, [projectEnvironments, globalEnvironments, activeProjectEnvironmentId, activeGlobalEnvironmentId]);
 
-    // Recalculate addVarState when active environment or its variables change
+    // Recalculate addVarState when active environment changes
     useEffect(() => {
         if (!addVarState) return;
         const { envId, currentValue } = findEnvForVariable(addVarState.name);
@@ -86,7 +86,8 @@ export const FormRequestSection = ({
                 value: prev.userEditedValue ? prev.value : currentValue,
             };
         });
-    }, [findEnvForVariable]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeProjectEnvironmentId, activeGlobalEnvironmentId]);
 
     const allEnvironmentOptions = [
         { value: '', label: 'Select environment...' },
@@ -211,7 +212,7 @@ export const FormRequestSection = ({
                         {!isFocused && (
                             <div
                                 className="absolute inset-0 flex items-center text-sm overflow-hidden whitespace-nowrap"
-                                onClick={(e) => e.stopPropagation()}
+                                onClick={() => inputRef.current?.focus()}
                             >
                                 {renderHighlightedUrl()}
                             </div>
